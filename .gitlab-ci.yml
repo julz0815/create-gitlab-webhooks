@@ -1,0 +1,8 @@
+image: node:18
+
+create-webhooks:
+  stage: deploy
+  script:
+    - node create-webhooks.js
+  only:
+    - main

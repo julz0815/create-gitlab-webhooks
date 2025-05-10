@@ -1,0 +1,22 @@
+{
+  "name": "gitlab_create_webhooks",
+  "version": "1.0.0",
+  "description": "Script to create GitLab webhooks for multiple repositories",
+  "main": "dist/create-webhooks.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/create-webhooks.js"
+  },
+  "keywords": ["gitlab", "webhooks", "automation"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "gitlab": "^14.2.2",
+    "dotenv": "^16.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "typescript": "^4.9.0",
+    "ts-node": "^10.9.0"
+  }
+}
