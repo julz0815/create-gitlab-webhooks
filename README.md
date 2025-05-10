@@ -65,7 +65,6 @@ The script creates webhooks with the following events enabled:
 - Merge request events
 - Issues events
 
-The webhook token is set to a static value defined in the script (`secret-token`). You can modify this in the source code if needed.
 
 ## Error Handling
 
