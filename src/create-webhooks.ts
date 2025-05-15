@@ -1,4 +1,4 @@
-import { Gitlab } from 'gitlab';
+import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -38,9 +38,8 @@ interface Webhook {
 // Define project interface
 interface Project {
     id: number;
-    path_with_namespace: string;
     name: string;
-    path: string;
+    path_with_namespace: string;
 }
 
 // Configuration
@@ -48,6 +47,7 @@ const GITLAB_URL = process.env.GITLAB_URL || 'https://gitlab.com';
 const PAT = process.env.GITLAB_PAT;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const REPOS_FILE = process.env.REPOS_FILE || 'repos.txt';
+const DEBUG = process.argv.includes('--debug');
 
 // Static part of the webhook URL that should be masked
 const MASKED_WEBHOOK_PART = 'secret-token';
@@ -74,39 +74,28 @@ try {
     process.exit(1);
 }
 
-const api = new Gitlab({
-    host: GITLAB_URL,
-    token: PAT,
-    requestTimeout: 30000
+// Create Axios instance with default config
+const api = axios.create({
+    baseURL: `${GITLAB_URL}/api/v4`,
+    headers: {
+        'PRIVATE-TOKEN': PAT,
+        'Content-Type': 'application/json'
+    },
+    timeout: 30000
 });
 
-// Helper function to log API calls
-async function logApiCall<T>(
-    operation: string,
-    apiCall: () => Promise<T>,
-    requestDetails?: any
-): Promise<T> {
-    console.log(`\n=== API Call: ${operation} ===`);
-    if (requestDetails) {
-        console.log('Request Details:', JSON.stringify(requestDetails, null, 2));
-    }
+async function getProjectId(projectPath: string): Promise<number> {
     try {
-        const result = await apiCall();
-        console.log('Response:', JSON.stringify(result, null, 2));
-        console.log(`=== End API Call: ${operation} ===\n`);
-        return result;
-    } catch (error: any) {
-        console.error(`=== Error in API Call: ${operation} ===`);
-        if (error.response) {
-            console.error('Error Response:', {
-                status: error.response.status,
-                statusText: error.response.statusText,
-                data: error.response.data,
-                headers: error.response.headers
-            });
+        if (DEBUG) {
+            console.log(`Fetching project ID for ${projectPath}`);
         }
-        console.error('Error:', error);
-        console.error(`=== End Error in API Call: ${operation} ===\n`);
+        const response = await api.get(`/projects/${encodeURIComponent(projectPath)}`);
+        if (DEBUG) {
+            console.log(response);
+        }
+        return (response.data as Project).id;
+    } catch (error: any) {
+        console.error(`Error fetching project ID for ${projectPath}:`, error);
         throw error;
     }
 }
@@ -116,39 +105,61 @@ async function createWebhook(groupPath: string, repoName: string) {
         // Construct the full project path
         const projectPath = `${groupPath}/${repoName}`;
         
-        console.log(`\n=== Webhook Operations for ${projectPath} ===`);
-        console.log(`API Base URL: ${GITLAB_URL}`);
+        console.log(`\nProcessing repository: ${projectPath}`);
+        if (DEBUG) {
+            console.log(`\n=== Webhook Operations for ${projectPath} ===`);
+            console.log(`API Base URL: ${GITLAB_URL}`);
+        }
+        
+        // Get project ID first
+        const projectId = await getProjectId(projectPath);
+        if (DEBUG) {
+            console.log(`Project ID: ${projectId}`);
+        }
         
         // Get existing webhooks
-        console.log(`\nFetching existing webhooks...`);
-        const existingWebhooks = await logApiCall(
-            'Get Project Hooks',
-            () => api.ProjectHooks.all(projectPath),
-            { projectPath }
-        ) as Webhook[];
+        if (DEBUG) {
+            console.log(`\nFetching existing webhooks...`);
+        }
+        const response = await api.get(`/projects/${projectId}/hooks`);
+        if (DEBUG) {
+            console.log(response);
+        }
+        const existingWebhooks = response.data as Webhook[];
         
-        console.log(`Found ${existingWebhooks.length} existing webhooks`);
+        if (DEBUG) {
+            console.log(`Found ${existingWebhooks.length} existing webhooks`);
+        }
         
         // Check if webhook with our URL already exists
         const existingWebhook = existingWebhooks.find((hook: Webhook) => hook.url === encodedWebhookUrl);
         
-        console.log(`\nWebhook URL being used: ${encodedWebhookUrl}`);
-        console.log(`Existing webhooks: ${JSON.stringify(existingWebhooks, null, 2)}`);
+        if (DEBUG) {
+            console.log(`\nWebhook URL being used: ${encodedWebhookUrl}`);
+            console.log(`Existing webhooks:`, existingWebhooks);
+        }
         
         let webhook;
         if (existingWebhook) {
             // Delete existing webhook
-            console.log(`\nDeleting existing webhook...`);
-            await logApiCall(
-                'Delete Project Hook',
-                () => api.ProjectHooks.remove(projectPath, existingWebhook.id),
-                { projectPath, hookId: existingWebhook.id }
-            );
-            console.log(`Deleted existing webhook for ${projectPath}`);
+            console.log(`Found existing webhook - will be deleted`);
+            if (DEBUG) {
+                console.log(`\nDeleting existing webhook...`);
+            }
+            const deleteResponse = await api.delete(`/projects/${projectId}/hooks/${existingWebhook.id}`);
+            if (DEBUG) {
+                console.log(deleteResponse);
+            }
+            if (DEBUG) {
+                console.log(`Deleted existing webhook for ${projectPath}`);
+            }
         }
         
         // Create new webhook
-        console.log(`\nCreating new webhook...`);
+        console.log(`Creating new webhook...`);
+        if (DEBUG) {
+            console.log(`\nCreating new webhook...`);
+        }
         const webhookConfig = {
             url: encodedWebhookUrl,
             push_events: true,
@@ -158,18 +169,24 @@ async function createWebhook(groupPath: string, repoName: string) {
             token: MASKED_WEBHOOK_PART
         };
         
-        webhook = await logApiCall(
-            'Create Project Hook',
-            () => api.ProjectHooks.add(projectPath, encodedWebhookUrl, webhookConfig),
-            { projectPath, webhookConfig }
-        );
+        const createResponse = await api.post(`/projects/${projectId}/hooks`, webhookConfig);
+        if (DEBUG) {
+            console.log(createResponse);
+        }
+        webhook = createResponse.data;
         
-        console.log(`Created new webhook for ${projectPath}`);
-        console.log(`=== End Webhook Operations for ${projectPath} ===\n`);
+        console.log(`Webhook created successfully for ${projectPath}`);
+        if (DEBUG) {
+            console.log(`Created new webhook for ${projectPath}`);
+            console.log(`=== End Webhook Operations for ${projectPath} ===\n`);
+        }
 
         return webhook;
     } catch (error: any) {
         console.error(`\n=== Error in Webhook Operations for ${groupPath}/${repoName} ===`);
+        if (DEBUG) {
+            console.log(error);
+        }
         if (error.response) {
             console.error('Error Response:', {
                 status: error.response.status,
@@ -186,24 +203,50 @@ async function createWebhook(groupPath: string, repoName: string) {
 
 async function getAllGroupRepositories(groupPath: string): Promise<{ groupPath: string; repoName: string }[]> {
     try {
-        console.log(`\n=== Getting Repositories for Group ${groupPath} ===`);
-        console.log(`API Base URL: ${GITLAB_URL}`);
+        console.log(`\nFetching repositories for group: ${groupPath}`);
+        if (DEBUG) {
+            console.log(`\n=== Getting Repositories for Group ${groupPath} ===`);
+            console.log(`API Base URL: ${GITLAB_URL}`);
+        }
         
-        // Get all projects in the group and subgroups
-        console.log(`\nFetching projects...`);
-        const projects = await logApiCall(
-            'Get Group Projects',
-            () => api.Groups.projects(groupPath, {
-                include_subgroups: true,
-                per_page: 100
-            }),
-            { groupPath, include_subgroups: true, per_page: 100 }
-        ) as Project[];
+        let allProjects: Project[] = [];
+        let page = 1;
+        const perPage = 100;
         
-        console.log(`Found ${projects.length} projects`);
-        console.log(`Projects: ${JSON.stringify(projects.map(p => p.path_with_namespace), null, 2)}`);
+        // Get all projects in the group and subgroups with pagination
+        if (DEBUG) {
+            console.log(`\nFetching projects...`);
+        }
+        while (true) {
+            const response = await api.get(`/groups/${encodeURIComponent(groupPath)}/projects`, {
+                params: {
+                    page,
+                    per_page: perPage,
+                    include_subgroups: true
+                }
+            });
+            if (DEBUG) {
+                console.log(response);
+            }
+            const projects = response.data as Project[];
+            
+            allProjects = allProjects.concat(projects);
+            
+            // If we got less than perPage items, we've reached the end
+            if (projects.length < perPage) {
+                break;
+            }
+            
+            page++;
+        }
+        
+        console.log(`Found ${allProjects.length} repositories to process`);
+        if (DEBUG) {
+            console.log(`Found ${allProjects.length} projects`);
+            console.log(`Projects:`, allProjects.map(p => p.path_with_namespace));
+        }
 
-        const repositories = projects.map((project: Project) => {
+        const repositories = allProjects.map((project: Project) => {
             // Extract group path and repo name from the full path
             const fullPath = project.path_with_namespace;
             const parts = fullPath.split('/');
@@ -212,12 +255,17 @@ async function getAllGroupRepositories(groupPath: string): Promise<{ groupPath: 
             return { groupPath, repoName };
         });
 
-        console.log(`\nProcessed repositories: ${JSON.stringify(repositories, null, 2)}`);
-        console.log(`=== End Group Repositories for ${groupPath} ===\n`);
+        if (DEBUG) {
+            console.log(`\nProcessed repositories:`, repositories);
+            console.log(`=== End Group Repositories for ${groupPath} ===\n`);
+        }
 
         return repositories;
     } catch (error: any) {
         console.error(`\n=== Error Getting Repositories for Group ${groupPath} ===`);
+        if (DEBUG) {
+            console.log(error);
+        }
         if (error.response) {
             console.error('Error Response:', {
                 status: error.response.status,
@@ -238,22 +286,26 @@ async function processRepositories() {
         const content = fs.readFileSync(REPOS_FILE, 'utf-8');
         const lines = content.split('\n').filter(line => line.trim());
 
-    
+        console.log(`\nStarting webhook creation process...`);
+        console.log(`Reading repositories from: ${REPOS_FILE}`);
+        console.log(`Found ${lines.length} entries to process`);
 
         for (const line of lines) {
             const parts = line.split('/');
             const repoName = parts.pop()!; // Get the last part (repository name)
             const groupPath = parts.join('/'); // Join the remaining parts as group path
 
-            console.log("\nGitLab URL:" + GITLAB_URL);
-            console.log("\nPersonal Access Token:" + PAT);
-            console.log("\nWebhook URL:" + WEBHOOK_URL);
-            console.log("\nRepositories file:" + REPOS_FILE);
+            if (DEBUG) {
+                console.log("\nGitLab URL:" + GITLAB_URL);
+                console.log("\nPersonal Access Token:" + PAT);
+                console.log("\nWebhook URL:" + WEBHOOK_URL);
+                console.log("\nRepositories file:" + REPOS_FILE);
+            }
             
             if (repoName === '*') {
                 // Get all repositories in the group and subgroups
                 const repositories = await getAllGroupRepositories(groupPath);
-                console.log(`--Found ${repositories.length} repositories in group ${groupPath}`);
+                console.log(`Processing ${repositories.length} repositories in group ${groupPath}`);
                 
                 // Create webhooks for all repositories
                 for (const repo of repositories) {
@@ -265,7 +317,7 @@ async function processRepositories() {
             }
         }
 
-        console.log('\n\nAll webhooks have been created successfully');
+        console.log('\nAll webhooks have been created successfully');
     } catch (error) {
         console.error('\n\nError processing repositories:', error);
         process.exit(1);

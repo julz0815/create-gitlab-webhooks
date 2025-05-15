@@ -15,6 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "axios": "^0.21.1",
     "dotenv": "^16.0.3",
     "gitlab": "^14.2.2"
   },
@@ -22,6 +23,6 @@
     "@types/axios": "^0.9.36",
     "@types/node": "^18.0.0",
     "ts-node": "^10.9.0",
-    "typescript": "^4.9.0"
+    "typescript": "^4.7.4"
   }
 }
