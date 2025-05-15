@@ -106,6 +106,7 @@ async function createWebhook(groupPath: string, repoName: string) {
             enable_ssl_verification: true,
             token: MASKED_WEBHOOK_PART
         });
+        console.log(webhook);
         console.log(`-- Created new webhook for ${projectPath}`);
 
         return webhook;
@@ -143,12 +144,17 @@ async function processRepositories() {
         const content = fs.readFileSync(REPOS_FILE, 'utf-8');
         const lines = content.split('\n').filter(line => line.trim());
 
+    
+
         for (const line of lines) {
             const parts = line.split('/');
             const repoName = parts.pop()!; // Get the last part (repository name)
             const groupPath = parts.join('/'); // Join the remaining parts as group path
 
-            console.log(`\nProcessing repository: ${line}`);
+            console.log("\nGitLab URL:" + GITLAB_URL);
+            console.log("\nPersonal Access Token:" + PAT);
+            console.log("\nWebhook URL:" + WEBHOOK_URL);
+            console.log("\nRepositories file:" + REPOS_FILE);
             
             if (repoName === '*') {
                 // Get all repositories in the group and subgroups
