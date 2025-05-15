@@ -9036,23 +9036,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -9095,36 +9085,86 @@ catch (error) {
 const api = new gitlab_1.Gitlab({
     host: GITLAB_URL,
     token: PAT,
+    requestTimeout: 30000
 });
+// Helper function to log API calls
+function logApiCall(operation, apiCall, requestDetails) {
+    return __awaiter(this, void 0, void 0, function* () {
+        console.log(`\n=== API Call: ${operation} ===`);
+        if (requestDetails) {
+            console.log('Request Details:', JSON.stringify(requestDetails, null, 2));
+        }
+        try {
+            const result = yield apiCall();
+            console.log('Response:', JSON.stringify(result, null, 2));
+            console.log(`=== End API Call: ${operation} ===\n`);
+            return result;
+        }
+        catch (error) {
+            console.error(`=== Error in API Call: ${operation} ===`);
+            if (error.response) {
+                console.error('Error Response:', {
+                    status: error.response.status,
+                    statusText: error.response.statusText,
+                    data: error.response.data,
+                    headers: error.response.headers
+                });
+            }
+            console.error('Error:', error);
+            console.error(`=== End Error in API Call: ${operation} ===\n`);
+            throw error;
+        }
+    });
+}
 function createWebhook(groupPath, repoName) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             // Construct the full project path
             const projectPath = `${groupPath}/${repoName}`;
+            console.log(`\n=== Webhook Operations for ${projectPath} ===`);
+            console.log(`API Base URL: ${GITLAB_URL}`);
             // Get existing webhooks
-            const existingWebhooks = yield api.ProjectHooks.all(projectPath);
+            console.log(`\nFetching existing webhooks...`);
+            const existingWebhooks = yield logApiCall('Get Project Hooks', () => api.ProjectHooks.all(projectPath), { projectPath });
+            console.log(`Found ${existingWebhooks.length} existing webhooks`);
             // Check if webhook with our URL already exists
             const existingWebhook = existingWebhooks.find((hook) => hook.url === encodedWebhookUrl);
+            console.log(`\nWebhook URL being used: ${encodedWebhookUrl}`);
+            console.log(`Existing webhooks: ${JSON.stringify(existingWebhooks, null, 2)}`);
             let webhook;
             if (existingWebhook) {
                 // Delete existing webhook
-                yield api.ProjectHooks.remove(projectPath, existingWebhook.id);
-                console.log(`-- Deleted existing webhook for ${projectPath}`);
+                console.log(`\nDeleting existing webhook...`);
+                yield logApiCall('Delete Project Hook', () => api.ProjectHooks.remove(projectPath, existingWebhook.id), { projectPath, hookId: existingWebhook.id });
+                console.log(`Deleted existing webhook for ${projectPath}`);
             }
             // Create new webhook
-            webhook = yield api.ProjectHooks.add(projectPath, encodedWebhookUrl, {
+            console.log(`\nCreating new webhook...`);
+            const webhookConfig = {
+                url: encodedWebhookUrl,
                 push_events: true,
                 merge_requests_events: true,
                 issues_events: true,
                 enable_ssl_verification: true,
                 token: MASKED_WEBHOOK_PART
-            });
-            console.log(webhook);
-            console.log(`-- Created new webhook for ${projectPath}`);
+            };
+            webhook = yield logApiCall('Create Project Hook', () => api.ProjectHooks.add(projectPath, encodedWebhookUrl, webhookConfig), { projectPath, webhookConfig });
+            console.log(`Created new webhook for ${projectPath}`);
+            console.log(`=== End Webhook Operations for ${projectPath} ===\n`);
             return webhook;
         }
         catch (error) {
-            console.error(`--Failed to create/update webhook for ${groupPath}/${repoName}:`, error);
+            console.error(`\n=== Error in Webhook Operations for ${groupPath}/${repoName} ===`);
+            if (error.response) {
+                console.error('Error Response:', {
+                    status: error.response.status,
+                    statusText: error.response.statusText,
+                    data: error.response.data,
+                    headers: error.response.headers
+                });
+            }
+            console.error(`Error details:`, error);
+            console.error(`=== End Error Details ===\n`);
             throw error;
         }
     });
@@ -9132,12 +9172,17 @@ function createWebhook(groupPath, repoName) {
 function getAllGroupRepositories(groupPath) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
+            console.log(`\n=== Getting Repositories for Group ${groupPath} ===`);
+            console.log(`API Base URL: ${GITLAB_URL}`);
             // Get all projects in the group and subgroups
-            const projects = yield api.Groups.projects(groupPath, {
+            console.log(`\nFetching projects...`);
+            const projects = yield logApiCall('Get Group Projects', () => api.Groups.projects(groupPath, {
                 include_subgroups: true,
                 per_page: 100
-            });
-            return projects.map((project) => {
+            }), { groupPath, include_subgroups: true, per_page: 100 });
+            console.log(`Found ${projects.length} projects`);
+            console.log(`Projects: ${JSON.stringify(projects.map(p => p.path_with_namespace), null, 2)}`);
+            const repositories = projects.map((project) => {
                 // Extract group path and repo name from the full path
                 const fullPath = project.path_with_namespace;
                 const parts = fullPath.split('/');
@@ -9145,9 +9190,22 @@ function getAllGroupRepositories(groupPath) {
                 const groupPath = parts.join('/');
                 return { groupPath, repoName };
             });
+            console.log(`\nProcessed repositories: ${JSON.stringify(repositories, null, 2)}`);
+            console.log(`=== End Group Repositories for ${groupPath} ===\n`);
+            return repositories;
         }
         catch (error) {
-            console.error(`--Failed to get repositories for group ${groupPath}:`, error);
+            console.error(`\n=== Error Getting Repositories for Group ${groupPath} ===`);
+            if (error.response) {
+                console.error('Error Response:', {
+                    status: error.response.status,
+                    statusText: error.response.statusText,
+                    data: error.response.data,
+                    headers: error.response.headers
+                });
+            }
+            console.error(`Error details:`, error);
+            console.error(`=== End Error Details ===\n`);
             throw error;
         }
     });
